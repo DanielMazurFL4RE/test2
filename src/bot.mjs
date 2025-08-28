@@ -123,7 +123,7 @@ async function* streamResponse(input, tools){
     input,
     stream: true,
     ...(tools?.length ? { tools } : {}),
-    reasoning_effort: DEFAULT_REASONING,
+    reasoning.effort: DEFAULT_REASONING,
     verbosity: DEFAULT_VERBOSITY
   });
   let accum = '';
