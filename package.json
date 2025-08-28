@@ -1,0 +1,18 @@
+{
+  "name": "gpt5-discord-bot",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Discord bot using OpenAI GPT-5 (Responses API) with streaming and optional web search.",
+  "scripts": {
+    "start": "node src/bot.mjs"
+  },
+  "engines": {
+    "node": ">=20.9"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "openai": "^4.89.0"
+  }
+}
