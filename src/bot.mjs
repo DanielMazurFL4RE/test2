@@ -11,8 +11,8 @@ import {
 } from 'discord.js';
 import OpenAI from 'openai';
 
-/* Prefixes */
-const PREFIXES = ['gemini', 'ricky', 'rick'];
+/* Prefixes: reagujemy na te (case-insensitive) */
+const PREFIXES = ['Julian', 'gpt', 'julian'];
 
 /* ENV checks */
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -37,12 +37,12 @@ function userNickFromMessage(msg) {
   return msg.member?.displayName || msg.author?.globalName || msg.author?.username || 'Użytkownik';
 }
 
-/* OpenAI client & config */
+/* OpenAI (Responses API) */
 const MODEL = process.env.OPENAI_MODEL || 'gpt-5';
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const DEFAULT_VERBOSITY = (process.env.OPENAI_VERBOSITY || 'medium').toLowerCase();
-const DEFAULT_REASONING = (process.env.OPENAI_REASONING || 'low').toLowerCase();
+const DEFAULT_REASONING  = (process.env.OPENAI_REASONING  || 'low').toLowerCase();
 
 function buildToolsFromEnv() {
   const tools = [];
@@ -87,9 +87,9 @@ function getHistory(channelId){ if(!memory.has(channelId)) memory.set(channelId,
 function pushTurn(channelId, role, text, maxTurns=12){ const h=getHistory(channelId); h.push({role, text}); memory.set(channelId, h.slice(-maxTurns)); }
 function chunkForDiscord(text, limit=2000){ if((text||'').length<=limit) return [text||'']; const out=[]; for(let i=0;i<text.length;i+=limit) out.push(text.slice(i,i+limit)); return out; }
 
-/* Auto-register + nickname Ricky */
+/* Auto-register + nickname Ricky (pozostaje bez zmian) */
 async function setBotNicknameInGuild(guild){
-  try{ await guild.members.fetchMe(); await guild.members.me.setNickname('Ricky'); console.log(`📝 Set nickname "Ricky" in ${guild.name} (${guild.id})`); }
+  try{ await guild.members.fetchMe(); await guild.members.me.setNickname('Julian'); console.log(`📝 Set nickname "Julian" in ${guild.name} (${guild.id})`); }
   catch(e){ console.warn(`⚠️ Could not set nickname in ${guild.name} (${guild.id}):`, e?.message || e); }
 }
 
@@ -116,7 +116,7 @@ client.on('guildCreate', async (guild) => {
   await setBotNicknameInGuild(guild);
 });
 
-/* OpenAI call helpers */
+/* Streaming helper */
 async function* streamResponse(input, tools){
   const stream = await openai.responses.create({
     model: MODEL,
@@ -155,7 +155,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       pushTurn(channelId, 'user', userPrompt);
       const hist = getHistory(channelId);
       const userNick = userNickFromInteraction(interaction);
-      const sys = `Jesteś pomocnym asystentem na Discordzie. Odpowiadaj zwięźle i jasno. Aktualny rozmówca (nickname): ${userNick}`;
+
+      // SYSTEM PROMPT = Julian (TPB), krótko, często szorstko
+      const sys = `Jesteś botem discordowym, który odpowiada jak Julian z "Chłopaków z baraków" (Trailer Park Boys). Odpowiadasz krótko, najlepiej jednym zdaniem i rzadko jesteś miły. Aktualny rozmówca (nickname): ${userNick}`;
+
       const textPrompt = buildPrompt(sys, hist, userPrompt);
       const tools = buildToolsFromEnv();
       const useStream = flag('OPENAI_STREAM', true);
@@ -180,11 +183,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } else {
         const res = await openai.responses.create({
-          model: MODEL,
-          input: textPrompt,
+          model: MODEL, input: textPrompt,
           ...(tools.length ? { tools } : {}),
-          reasoning_effort: DEFAULT_REASONING,
-          verbosity: DEFAULT_VERBOSITY
+          reasoning_effort: DEFAULT_REASONING, verbosity: DEFAULT_VERBOSITY
         });
         const answer = res.output_text ?? res.output?.[0]?.content?.[0]?.text ?? '(brak treści)';
         pushTurn(channelId, 'model', answer);
@@ -219,8 +220,8 @@ client.on(Events.MessageCreate, async (msg) => {
     let prompt = raw;
     if (matchedPrefix) prompt = raw.slice(matchedPrefix.length);
     else if (startsWithMention) prompt = raw.replace(mention, '');
-    prompt = prompt.replace(/^[:\-–—,\.\s]+/, '').trim();
-    if (!prompt) { await msg.reply('Podaj treść po prefiksie (gemini/ricky/rick) lub po wzmiance.'); return; }
+    prompt = prompt.replace(/^[:\-–—,.\s]+/, '').trim();
+    if (!prompt) { await msg.reply('Podaj treść po prefiksie (gpt/julian) lub po wzmiance.'); return; }
 
     await msg.channel.sendTyping();
 
@@ -229,7 +230,10 @@ client.on(Events.MessageCreate, async (msg) => {
 
     const hist = getHistory(channelId);
     const userNick = userNickFromMessage(msg);
-    const sys = `Jesteś pomocnym asystentem na Discordzie. Odpowiadaj zwięźle i jasno. Aktualny rozmówca (nickname): ${userNick}`;
+
+    // SYSTEM PROMPT = Julian (TPB), krótko, często szorstko
+    const sys = `Jesteś botem discordowym, który odpowiada jak Julian z "Chłopaków z baraków" (Trailer Park Boys). Odpowiadasz krótko, najlepiej jednym zdaniem i rzadko jesteś miły. Aktualny rozmówca (nickname): ${userNick}`;
+
     const textPrompt = buildPrompt(sys, hist, prompt);
     const tools = buildToolsFromEnv();
     const useStream = flag('OPENAI_STREAM', true);
@@ -255,11 +259,9 @@ client.on(Events.MessageCreate, async (msg) => {
       }
     } else {
       const res = await openai.responses.create({
-        model: MODEL,
-        input: textPrompt,
+        model: MODEL, input: textPrompt,
         ...(tools.length ? { tools } : {}),
-        reasoning_effort: DEFAULT_REASONING,
-        verbosity: DEFAULT_VERBOSITY
+        reasoning_effort: DEFAULT_REASONING, verbosity: DEFAULT_VERBOSITY
       });
       const answer = res.output_text ?? res.output?.[0]?.content?.[0]?.text ?? '(brak treści)';
       pushTurn(channelId, 'model', answer);
