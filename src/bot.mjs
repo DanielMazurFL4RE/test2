@@ -29,6 +29,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 if (!OPENAI_API_KEY) { console.error('❌ Missing OPENAI_API_KEY'); process.exit(1); }
 
 /* =========================
+   Ustawienia kontekstu z kanału
+   ========================= */
+const CHANNEL_CTX_LIMIT    = parseInt(process.env.CHANNEL_CTX_LIMIT || '35', 10);
+const CHANNEL_CTX_MAXCHARS = parseInt(process.env.CHANNEL_CTX_MAXCHARS || '3000', 10);
+
+/* =========================
    Helpers
    ========================= */
 function flag(name, def=false) {
@@ -48,6 +54,38 @@ function chunkForDiscord(text, limit=2000) {
   const out=[]; for(let i=0;i<text.length;i+=limit) out.push(text.slice(i,i+limit)); return out;
 }
 
+/* Zbuduj blok kontekstu z ostatnich wiadomości w kanale, z nickami */
+async function buildChannelContext(channel, {
+  limit = CHANNEL_CTX_LIMIT,
+  maxChars = CHANNEL_CTX_MAXCHARS,
+  excludeIds = new Set(),
+} = {}) {
+  try {
+    const coll = await channel.messages.fetch({ limit: Math.min(Math.max(limit, 1), 100) });
+    const msgs = Array.from(coll.values()).sort((a,b) => a.createdTimestamp - b.createdTimestamp);
+
+    const lines = [];
+    for (const m of msgs) {
+      if (excludeIds.has(m.id)) continue;
+      if (!m?.content) continue;
+      if (m.author?.bot) continue;
+      if (m.content.startsWith('/')) continue;
+
+      const nick = m.member?.displayName || m.author?.globalName || m.author?.username || `uid:${m.author?.id}`;
+      const text = (m.cleanContent || m.content).replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      lines.push(`[@${nick}]: ${text}`);
+    }
+
+    let ctx = lines.join('\n');
+    if (ctx.length > maxChars) ctx = ctx.slice(-maxChars);
+    return ctx;
+  } catch (e) {
+    console.warn('⚠️ Nie udało się pobrać historii kanału:', e?.message || e);
+    return '';
+  }
+}
+
 /* =========================
    OpenAI (Responses API)
    ========================= */
@@ -63,7 +101,6 @@ function buildToolsFromEnv() {
   if (flag('OPENAI_WEB_SEARCH')) tools.push({ type: 'web_search' });
   return tools;
 }
-
 function reasoningConfig() {
   return { reasoning: { effort: DEFAULT_REASONING } };
 }
@@ -72,16 +109,22 @@ function textConfig() {
   return { text: { verbosity: DEFAULT_VERBOSITY } };
 }
 
+/* Persona (dokładnie jak podałeś) */
 const JULIAN_PERSONA =
   `Jesteś asystentem na Discordzie. Odpowiadaj sucho i z przeklenstwami jak w CHlopakach z Barakow. Jak postać Julian, ale odpisuj max jednym zdaniem. Czasem staraj się być pomocny. Odpowiadaj krótko (1-2 zdania). Nie myl rozmówców: zawsze kojarz wypowiedzi z właściwymi nickami.
 Masz dwie warstwy pamięci: prywatną (bieżący użytkownik) i wspólną dla kanału (ostatnie wypowiedzi różnych osób).`;
 
-/* Składanie promptu: historia + persona + aktualny rozmówca */
-function buildPrompt(userNick, history, userText) {
+/* Składanie promptu: historia + persona + aktualny rozmówca + kontekst kanału */
+function buildPrompt(userNick, history, userText, channelCtx = '') {
   const hist = history
     .map(m => (m.role === 'user' ? `User: ${m.text}` : `Assistant: ${m.text}`))
     .join('\n');
-  return `${JULIAN_PERSONA}\n\nAktualny rozmówca (nickname): ${userNick}\n\nConversation so far:\n${hist}\n\nUser: ${userText}\nAssistant:`;
+
+  const channelBlock = channelCtx
+    ? `\n\nKontekst kanału (ostatnie wiadomości różnych osób):\n${channelCtx}`
+    : '';
+
+  return `${JULIAN_PERSONA}\n\nAktualny rozmówca (nickname): ${userNick}${channelBlock}\n\nConversation so far:\n${hist}\n\nUser: ${userText}\nAssistant:`;
 }
 
 /* Streaming helper */
@@ -210,7 +253,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       pushTurn(sk, 'user', userPrompt);
       const hist = getHistory(sk);
       const userNick = userNickFromInteraction(interaction);
-      const input = buildPrompt(userNick, hist, userPrompt);
+      const channelCtx = await buildChannelContext(interaction.channel);
+      const input = buildPrompt(userNick, hist, userPrompt, channelCtx);
       const tools = buildToolsFromEnv();
       const useStream = flag('OPENAI_STREAM', true);
 
@@ -285,7 +329,8 @@ client.on(Events.MessageCreate, async (msg) => {
 
     const hist = getHistory(sk);
     const userNick = userNickFromMessage(msg);
-    const input = buildPrompt(userNick, hist, prompt);
+    const channelCtx = await buildChannelContext(msg.channel, { excludeIds: new Set([msg.id]) });
+    const input = buildPrompt(userNick, hist, prompt, channelCtx);
     const tools = buildToolsFromEnv();
     const useStream = flag('OPENAI_STREAM', true);
 
